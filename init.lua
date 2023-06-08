@@ -1,4 +1,4 @@
--- mod-version:3
+-- mod-version:3.1
 local core = require "core"
 local keymap = require "core.keymap"
 local command = require "core.command"
@@ -122,7 +122,7 @@ local function init_opt(opt)
     file_pattern = "([^?:%s]+%.[^?:%s]+):?(%d*):?(%d*)",
     error_pattern = "error",
     warning_pattern = "warning",
-    cwd = ".",
+    cwd = core.root_project().path,
     on_complete = function() end,
     file_prefix = ".",
   }
@@ -255,16 +255,24 @@ end
 
 
 local function resolve_file(file_prefix, name)
-  name = file_prefix .. PATHSEP .. name
-  if system.get_file_info(name) then
+  if common.is_absolute_path(name) and system.get_file_info(name) then
     return name
   end
-  local filenames = {}
-  for _, f in ipairs(core.project_files) do
-    table.insert(filenames, f.filename)
+  local rel_name = file_prefix .. PATHSEP .. name
+  if system.get_file_info(core.root_project():absolute_path(rel_name)) then
+    return rel_name
   end
-  local t = common.fuzzy_match(filenames, name)
-  return t[1]
+  local filenames = {}
+  local count = 0
+  core.log("Searching for %s ...", name)
+  for _, f in core.root_project():files() do
+    table.insert(filenames, f.filename)
+    count = count + 1
+    if count % 100 == 0 then coroutine.yield() end
+  end
+  local t = common.fuzzy_match(filenames, name, true)
+  if t and t[1] then return core.root_project():absolute_path(t[1]) end
+  return nil
 end
 
 
@@ -282,25 +290,27 @@ function ConsoleView:on_mouse_pressed(...)
   end
   local item = output[self.hovered_idx]
   if item then
-    local file, line, col = item.text:match(item.file_pattern)
-    local resolved_file = resolve_file(item.file_prefix, file)
-    if not resolved_file then
-      -- fixes meson output which adds ../ for build sub directories
-      resolved_file = resolve_file(
-        item.file_prefix,
-        file:gsub("%.%./", ""):gsub("^%./", "")
-      )
-    end
-    if not resolved_file then
-      core.error("Couldn't resolve file \"%s\"", file)
-      return
-    end
-    core.try(function()
-      core.root_view:open_doc(core.open_doc(resolved_file))
-      line = tonumber(line) or 1
-      col = tonumber(col) or 1
-      core.add_thread(function()
-        core.active_view.doc:set_selection(line, col)
+    core.add_thread(function ()
+      local file, line, col = item.text:match(item.file_pattern)
+      local resolved_file = resolve_file(item.file_prefix, file)
+      if not resolved_file then
+        -- fixes meson output which adds ../ for build sub directories
+        resolved_file = resolve_file(
+          item.file_prefix,
+          file:gsub("%.%./", ""):gsub("^%./", "")
+        )
+      end
+      if not resolved_file then
+        core.error("Couldn't resolve file \"%s\"", file)
+        return
+      end
+      core.try(function()
+        core.root_view:open_doc(core.open_doc(resolved_file))
+        line = tonumber(line) or 1
+        col = tonumber(col) or 1
+        core.add_thread(function()
+          core.active_view.doc:set_selection(line, col)
+        end)
       end)
     end)
   end
