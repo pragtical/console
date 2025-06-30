@@ -139,7 +139,7 @@ function console.run(opt)
   local function thread()
     local command
     if PLATFORM == "Windows" then
-      command = string.format("cmd /c (%s) 2>&1", opt.command)
+      command = string.format("cmd /c (%s) 2>&1", opt.command:gsub("/", "\\"))
     else
       command = { "bash", "-c", "--", string.format("(%s) 2>&1", opt.command) }
     end
